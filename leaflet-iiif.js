@@ -52,12 +52,13 @@ L.TileLayer.Iiif = L.TileLayer.extend({
     var xDiff = (maxx - minx);
     var yDiff = (maxy - miny);
 
-    // Canonical URI Syntax for v2
-    var size = Math.ceil(xDiff / scale) + ',';
-    if (_this.type === 'ImageService3') {
-      // Cannonical URI Syntax for v3
-      size = size + Math.ceil(yDiff / scale);
-    }
+    // // Canonical URI Syntax for v2
+    // var size = Math.ceil(xDiff / scale) + ',';
+    // if (_this.type === 'ImageService3') {
+    //   // Cannonical URI Syntax for v3
+    //   size = size + Math.ceil(yDiff / scale);
+    // }
+    var size = Math.ceil(xDiff / scale) + ',' + Math.ceil(yDiff / scale);
 
     return L.Util.template(this._baseUrl, L.extend({
       format: _this.options.tileFormat,
@@ -73,7 +74,7 @@ L.TileLayer.Iiif = L.TileLayer.extend({
     // Wait for info.json fetch and parse to complete
     Promise.all([_this._infoPromise]).then(function() {
       // Store unmutated imageSizes
-      _this._imageSizesOriginal = _this._imageSizes.slice(0); 
+      _this._imageSizesOriginal = _this._imageSizes.slice(0);
 
       // Set maxZoom for map
       map._layersMaxZoom = _this.maxZoom;
@@ -250,6 +251,13 @@ L.TileLayer.Iiif = L.TileLayer.extend({
       
   },
 
+	setRotation: function (rotation) {
+		this.options.rotation = rotation;
+
+    this.redraw();
+
+		return this;
+	},
   _setQuality: function() {
     var _this = this;
     var profileToCheck = _this.profile;
@@ -315,6 +323,75 @@ L.TileLayer.Iiif = L.TileLayer.extend({
     }
     // return a default zoom
     return 2;
+  },
+
+  _getTileBounds: function (coords) {
+    var rotation = this.options.rotation,
+        tileSize = this.getTileSize(),
+        imageSize = this._imageSizes[this._tileZoom],
+        center = imageSize.divideBy(2),
+        p00 = coords.scaleBy(tileSize);
+        p11 = p00.add(tileSize);
+
+    if (p11.x > imageSize.x) { p11.x = imageSize.x; }
+    if (p11.y > imageSize.y) { p11.y = imageSize.y; }
+
+    var p01 = L.point(p00.x, p11.y),
+        p10 = L.point(p11.x, p00.y);
+
+    function rotate(point, center, degrees) {
+      var radians = (Math.PI / 180) * degrees,
+          cos = Math.cos(radians),
+          sin = Math.sin(radians);
+
+      return L.point(
+        (cos * (point.x - center.x)) - (sin * (point.y - center.y)) + center.x,
+        (cos * (point.y - center.y)) + (sin * (point.x - center.x)) + center.y
+      );
+    }
+
+    return L.bounds(
+      [
+        rotate(p00, center, rotation),
+        rotate(p01, center, rotation),
+        rotate(p10, center, rotation),
+        rotate(p11, center, rotation)
+      ]
+    );
+	},
+  _getTilePos: function (coords) {
+    if (this.options.rotation === undefined || this.options.rotation === 0) {
+      // original _getTilePos
+      return coords.scaleBy(this.getTileSize()).subtract(this._level.origin);
+    }
+
+    return this._getTileBounds(coords).getTopLeft().subtract(this._level.origin);
+  },
+  _pxBoundsToTileRange: function (bounds) {
+		var tileSize = this.getTileSize();
+
+    if (this.options.rotation === undefined || this.options.rotation === 0) {
+      // original _pxBoundsToTileRange
+      return L.bounds(
+        bounds.min.unscaleBy(tileSize).floor(),
+        bounds.max.unscaleBy(tileSize).ceil().subtract([1, 1])
+      );
+    }
+
+    var intersectedTiles = [],
+        maxBounds = L.point(this._tierSizes[this._tileZoom]);
+
+    for (var y = 0; y < maxBounds.y; y++) {
+      for (var x = 0; x < maxBounds.x; x++) {
+        var coords = L.point(x, y);
+
+        if (bounds.intersects(this._getTileBounds(coords))) {
+          intersectedTiles.push(coords);
+        }
+      }
+    }
+
+    return L.bounds(intersectedTiles);
   }
 });
 
